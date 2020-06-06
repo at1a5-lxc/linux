@@ -32,6 +32,7 @@
 #define SDDATA_FIFO_PIO_BURST   8
 #define CMD_DALLY_US            1
 
+#include <linux/debugfs.h>
 #include <linux/delay.h>
 #include <linux/module.h>
 #include <linux/io.h>
@@ -1638,6 +1639,8 @@ void bcm2835_sdhost_set_clock(struct bcm2835_host *host, unsigned int clock)
 	spin_unlock_irqrestore(&host->lock, flags);
 }
 
+static int lxcdebug = 0;
+
 static void bcm2835_sdhost_request(struct mmc_host *mmc, struct mmc_request *mrq)
 {
 	struct bcm2835_host *host;
@@ -1646,18 +1649,19 @@ static void bcm2835_sdhost_request(struct mmc_host *mmc, struct mmc_request *mrq
 
 	host = mmc_priv(mmc);
 
-	if (host->debug) {
+	//if (host->debug) {
+	if (lxcdebug) {
 		struct mmc_command *cmd = mrq->cmd;
 		BUG_ON(!cmd);
 		if (cmd->data)
-			pr_info("%s: cmd %d 0x%x (flags 0x%x) - %s %d*%d\n",
+			trace_printk("%s: cmd %d 0x%x (flags 0x%x) - %s %d*%d\n",
 				mmc_hostname(mmc),
 				cmd->opcode, cmd->arg, cmd->flags,
 				(cmd->data->flags & MMC_DATA_READ) ?
 				"read" : "write", cmd->data->blocks,
 				cmd->data->blksz);
 		else
-			pr_info("%s: cmd %d 0x%x (flags 0x%x)\n",
+			trace_printk("%s: cmd %d 0x%x (flags 0x%x)\n",
 				mmc_hostname(mmc),
 				cmd->opcode, cmd->arg, cmd->flags);
 	}
@@ -2009,6 +2013,30 @@ untasklet:
 	return ret;
 }
 
+static struct dentry *sdhost_debug_dir;
+static struct dentry *sdhost_debug_file;
+
+static int sdhost_debug_get(void *data, u64 *val)
+{
+	struct bcm2835_host *host = (struct bcm2835_host *)data;
+
+	//*val = (u64)host->debug;
+	*val = (u64)lxcdebug;
+	return 0;
+}
+
+static int sdhost_debug_set(void *data, u64 val)
+{
+	struct bcm2835_host *host = (struct bcm2835_host *)data;
+
+	//host->debug = !!(u32)val;
+	lxcdebug = !!(u32)val;
+	return 0;
+}
+
+DEFINE_SIMPLE_ATTRIBUTE(sdhost_debug_operations, sdhost_debug_get,
+			sdhost_debug_set, "%llu\n");
+
 static int bcm2835_sdhost_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
@@ -2021,7 +2049,7 @@ static int bcm2835_sdhost_probe(struct platform_device *pdev)
 	u32 msg[3];
 	int ret;
 
-	pr_debug("bcm2835_sdhost_probe\n");
+	pr_info("lxcdebug bcm2835_sdhost_probe\n");
 	mmc = mmc_alloc_host(sizeof(*host), dev);
 	if (!mmc)
 		return -ENOMEM;
@@ -2068,6 +2096,13 @@ static int bcm2835_sdhost_probe(struct platform_device *pdev)
 			!of_property_read_bool(node, "brcm,force-pio");
 		host->debug = of_property_read_bool(node, "brcm,debug");
 	}
+
+	sdhost_debug_dir = debugfs_create_dir("lxc_sdhost", NULL);
+	sdhost_debug_file = debugfs_create_file("debug",
+					      S_IFREG | S_IRUGO | S_IWUSR,
+					      sdhost_debug_dir,
+					      host,
+					      &sdhost_debug_operations);
 
 	host->dma_chan = NULL;
 	host->dma_desc = NULL;
